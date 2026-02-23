@@ -1,14 +1,21 @@
 # from inspire_dds import inspire_hand_touch,inspire_hand_ctrl,inspire_hand_state
 # from inspire_dds import inspire_hand_touch,inspire_hand_ctrl,inspire_hand_state
+import os
 import sys
 from inspire_sdkpy import inspire_sdk,inspire_hand_defaut
 import time
 # import inspire_sdkpy
 if __name__ == "__main__":
-    
-    
+    dds_iface = os.getenv("HANDS_DDS_INTERFACE", "enp39s0").strip() or None
+    print(f"[inspire_r] DDS interface: {dds_iface if dds_iface else '<auto>'}")
+
     # handler=inspire_sdk.ModbusDataHandler(ip=inspire_hand_defaut.defaut_ip,LR='r',device_id=1)
-    handler=inspire_sdk.ModbusDataHandler(ip='192.168.123.210',LR='r',device_id=1)
+    handler=inspire_sdk.ModbusDataHandler(
+        ip='192.168.123.210',
+        LR='r',
+        device_id=1,
+        network=dds_iface,
+    )
     time.sleep(0.5)
 
     call_count = 0  # 记录调用次数

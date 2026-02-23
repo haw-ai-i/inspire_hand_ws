@@ -36,3 +36,6 @@ __pycache__
 # JetBrains IDE
 .idea/
 
+
+**/__pycache__/
+*.py[cod]

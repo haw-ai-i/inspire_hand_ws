@@ -8,12 +8,18 @@
 from .inspire_hand_defaut import *
 from . import inspire_dds
 from .inspire_sdk import ModbusDataHandler
-from .qt_tabs import ImageTab,MainWindow,CurveTab
+
+try:
+    from .qt_tabs import CurveTab, ImageTab, MainWindow
+except Exception:
+    CurveTab = None
+    ImageTab = None
+    MainWindow = None
 
 __all__ = [
-	"inspire_dds",
-	"ModbusDataHandler",
-  "ImageTab",
-  "MainWindow",
-  "CurveTab"
+    "inspire_dds",
+    "ModbusDataHandler",
+    "ImageTab",
+    "MainWindow",
+    "CurveTab",
 ]
