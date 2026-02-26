@@ -83,40 +83,51 @@ class HandDDSIO:
         self._pub.Write(cmd)
 
 
-class CurrentPlotCanvas(QWidget):
-    def __init__(self, history_len: int, dt_s: float):
+class HandPlotCanvas(QWidget):
+    def __init__(self, side_label: str, history_len: int, dt_s: float):
         super().__init__()
         self.history_len = history_len
         self.dt_s = dt_s
         self.x = np.linspace(-history_len * dt_s, 0.0, history_len)
 
         layout = QVBoxLayout(self)
-        self.plot_l = pg.PlotWidget(title="Left Hand Current")
-        self.plot_r = pg.PlotWidget(title="Right Hand Current")
-        layout.addWidget(self.plot_l)
-        layout.addWidget(self.plot_r)
+        self.plot_curr = pg.PlotWidget(title=f"{side_label} Hand Current")
+        self.plot_force = pg.PlotWidget(title=f"{side_label} Hand Force")
+        self.plot_temp = pg.PlotWidget(title=f"{side_label} Hand Temperature")
 
-        self.plot_l.showGrid(x=True, y=True, alpha=0.3)
-        self.plot_r.showGrid(x=True, y=True, alpha=0.3)
-        self.plot_l.setLabel("left", "Current")
-        self.plot_r.setLabel("left", "Current")
-        self.plot_r.setLabel("bottom", "Time", "s")
+        for plot in (self.plot_curr, self.plot_force, self.plot_temp):
+            plot.showGrid(x=True, y=True, alpha=0.3)
+            layout.addWidget(plot)
+
+        self.plot_curr.setLabel("left", "Current")
+        self.plot_force.setLabel("left", "Force")
+        self.plot_temp.setLabel("left", "Temperature")
+        self.plot_temp.setLabel("bottom", "Time", "s")
 
         colors = ["#d32f2f", "#f57c00", "#fbc02d", "#388e3c", "#1976d2", "#7b1fa2"]
-        self.lines_l = []
-        self.lines_r = []
+        self.lines_curr = []
+        self.lines_force = []
+        self.lines_temp = []
         for i, name in enumerate(JOINT_NAMES):
             pen = pg.mkPen(colors[i % len(colors)], width=2)
-            self.lines_l.append(self.plot_l.plot(self.x, np.zeros(history_len), pen=pen, name=name))
-            self.lines_r.append(self.plot_r.plot(self.x, np.zeros(history_len), pen=pen, name=name))
+            self.lines_curr.append(self.plot_curr.plot(self.x, np.zeros(history_len), pen=pen, name=name))
+            self.lines_force.append(self.plot_force.plot(self.x, np.zeros(history_len), pen=pen, name=name))
+            self.lines_temp.append(self.plot_temp.plot(self.x, np.zeros(history_len), pen=pen, name=name))
 
-        self.plot_l.addLegend()
-        self.plot_r.addLegend()
+        self.plot_curr.addLegend()
+        self.plot_force.addLegend()
+        self.plot_temp.addLegend()
 
-    def update_plot(self, left_hist: list[deque], right_hist: list[deque]):
+    def update_plot(
+        self,
+        curr_hist: list[deque],
+        force_hist: list[deque],
+        temp_hist: list[deque],
+    ):
         for i in range(6):
-            self.lines_l[i].setData(self.x, np.array(left_hist[i], dtype=float))
-            self.lines_r[i].setData(self.x, np.array(right_hist[i], dtype=float))
+            self.lines_curr[i].setData(self.x, np.array(curr_hist[i], dtype=float))
+            self.lines_force[i].setData(self.x, np.array(force_hist[i], dtype=float))
+            self.lines_temp[i].setData(self.x, np.array(temp_hist[i], dtype=float))
 
 
 class MainWindow(QMainWindow):
@@ -136,6 +147,10 @@ class MainWindow(QMainWindow):
 
         self.current_left_hist = [deque([0.0] * self.history_len, maxlen=self.history_len) for _ in range(6)]
         self.current_right_hist = [deque([0.0] * self.history_len, maxlen=self.history_len) for _ in range(6)]
+        self.force_left_hist = [deque([0.0] * self.history_len, maxlen=self.history_len) for _ in range(6)]
+        self.force_right_hist = [deque([0.0] * self.history_len, maxlen=self.history_len) for _ in range(6)]
+        self.temp_left_hist = [deque([0.0] * self.history_len, maxlen=self.history_len) for _ in range(6)]
+        self.temp_right_hist = [deque([0.0] * self.history_len, maxlen=self.history_len) for _ in range(6)]
 
         self.left_labels: list[QLabel] = []
         self.right_labels: list[QLabel] = []
@@ -148,105 +163,140 @@ class MainWindow(QMainWindow):
 
     def _build_ui(self):
         root = QWidget()
-        main = QVBoxLayout(root)
+        main = QHBoxLayout(root)
+        left_col = QVBoxLayout()
+        right_col = QVBoxLayout()
 
-        control_box = QGroupBox("Control")
-        control_layout = QGridLayout(control_box)
+        left_ctrl = QGroupBox("Left Hand Control")
+        left_ctrl_layout = QGridLayout(left_ctrl)
+        left_ctrl_layout.addWidget(QLabel("Mode"), 0, 0)
+        self.left_mode_combo = QComboBox()
+        self.left_mode_combo.addItems(["position", "angle"])
+        left_ctrl_layout.addWidget(self.left_mode_combo, 0, 1)
+        left_ctrl_layout.addWidget(QLabel("Grasp Slider"), 1, 0)
+        self.left_slider = QSlider(Qt.Horizontal)
+        self.left_slider.setRange(0, 1000)
+        self.left_slider.setValue(0)
+        left_ctrl_layout.addWidget(self.left_slider, 1, 1, 1, 2)
+        self.left_slider_label = QLabel("0")
+        left_ctrl_layout.addWidget(self.left_slider_label, 1, 3)
+        self.left_slider.valueChanged.connect(lambda v: self.left_slider_label.setText(str(v)))
+        btn_l_open = QPushButton("Open (0)")
+        btn_l_half = QPushButton("Half (500)")
+        btn_l_close = QPushButton("Close (1000)")
+        btn_l_open.clicked.connect(lambda: self.left_slider.setValue(0))
+        btn_l_half.clicked.connect(lambda: self.left_slider.setValue(500))
+        btn_l_close.clicked.connect(lambda: self.left_slider.setValue(1000))
+        left_ctrl_layout.addWidget(btn_l_open, 2, 0)
+        left_ctrl_layout.addWidget(btn_l_half, 2, 1)
+        left_ctrl_layout.addWidget(btn_l_close, 2, 2)
+        btn_l_stop = QPushButton("Emergency Open")
+        btn_l_stop.clicked.connect(lambda: self.left_slider.setValue(0))
+        left_ctrl_layout.addWidget(btn_l_stop, 2, 3)
+        left_col.addWidget(left_ctrl)
 
-        control_layout.addWidget(QLabel("Target Hand"), 0, 0)
-        self.target_hand_combo = QComboBox()
-        self.target_hand_combo.addItems(["both", "left", "right"])
-        control_layout.addWidget(self.target_hand_combo, 0, 1)
+        right_ctrl = QGroupBox("Right Hand Control")
+        right_ctrl_layout = QGridLayout(right_ctrl)
+        right_ctrl_layout.addWidget(QLabel("Mode"), 0, 0)
+        self.right_mode_combo = QComboBox()
+        self.right_mode_combo.addItems(["position", "angle"])
+        right_ctrl_layout.addWidget(self.right_mode_combo, 0, 1)
+        right_ctrl_layout.addWidget(QLabel("Grasp Slider"), 1, 0)
+        self.right_slider = QSlider(Qt.Horizontal)
+        self.right_slider.setRange(0, 1000)
+        self.right_slider.setValue(0)
+        right_ctrl_layout.addWidget(self.right_slider, 1, 1, 1, 2)
+        self.right_slider_label = QLabel("0")
+        right_ctrl_layout.addWidget(self.right_slider_label, 1, 3)
+        self.right_slider.valueChanged.connect(lambda v: self.right_slider_label.setText(str(v)))
+        btn_r_open = QPushButton("Open (0)")
+        btn_r_half = QPushButton("Half (500)")
+        btn_r_close = QPushButton("Close (1000)")
+        btn_r_open.clicked.connect(lambda: self.right_slider.setValue(0))
+        btn_r_half.clicked.connect(lambda: self.right_slider.setValue(500))
+        btn_r_close.clicked.connect(lambda: self.right_slider.setValue(1000))
+        right_ctrl_layout.addWidget(btn_r_open, 2, 0)
+        right_ctrl_layout.addWidget(btn_r_half, 2, 1)
+        right_ctrl_layout.addWidget(btn_r_close, 2, 2)
+        btn_r_stop = QPushButton("Emergency Open")
+        btn_r_stop.clicked.connect(lambda: self.right_slider.setValue(0))
+        right_ctrl_layout.addWidget(btn_r_stop, 2, 3)
+        right_col.addWidget(right_ctrl)
 
-        control_layout.addWidget(QLabel("Mode"), 0, 2)
-        self.mode_combo = QComboBox()
-        self.mode_combo.addItems(["position", "angle"])
-        control_layout.addWidget(self.mode_combo, 0, 3)
-
-        control_layout.addWidget(QLabel("Grasp Slider"), 1, 0)
-        self.slider = QSlider(Qt.Horizontal)
-        self.slider.setRange(0, 1000)
-        self.slider.setValue(0)
-        control_layout.addWidget(self.slider, 1, 1, 1, 3)
-
-        self.slider_label = QLabel("0")
-        control_layout.addWidget(self.slider_label, 1, 4)
-        self.slider.valueChanged.connect(lambda v: self.slider_label.setText(str(v)))
-
-        self.btn_open = QPushButton("Open (0)")
-        self.btn_half = QPushButton("Half (500)")
-        self.btn_close = QPushButton("Close (1000)")
-        self.btn_open.clicked.connect(lambda: self.slider.setValue(0))
-        self.btn_half.clicked.connect(lambda: self.slider.setValue(500))
-        self.btn_close.clicked.connect(lambda: self.slider.setValue(1000))
-        control_layout.addWidget(self.btn_open, 2, 1)
-        control_layout.addWidget(self.btn_half, 2, 2)
-        control_layout.addWidget(self.btn_close, 2, 3)
-
-        self.btn_stop = QPushButton("Emergency Open")
-        self.btn_stop.clicked.connect(self._emergency_open)
-        control_layout.addWidget(self.btn_stop, 2, 4)
-
-        main.addWidget(control_box)
-
-        status_box = QGroupBox("Current (Latest)")
-        status_layout = QGridLayout(status_box)
-        status_layout.addWidget(QLabel("Joint"), 0, 0)
-        status_layout.addWidget(QLabel("Left"), 0, 1)
-        status_layout.addWidget(QLabel("Right"), 0, 2)
+        left_status = QGroupBox("Left Current (Latest)")
+        left_status_layout = QGridLayout(left_status)
+        left_status_layout.addWidget(QLabel("Joint"), 0, 0)
+        left_status_layout.addWidget(QLabel("Value"), 0, 1)
         for i, name in enumerate(JOINT_NAMES):
-            status_layout.addWidget(QLabel(name), i + 1, 0)
+            left_status_layout.addWidget(QLabel(name), i + 1, 0)
             ll = QLabel("-")
-            rr = QLabel("-")
             self.left_labels.append(ll)
+            left_status_layout.addWidget(ll, i + 1, 1)
+        left_col.addWidget(left_status)
+
+        right_status = QGroupBox("Right Current (Latest)")
+        right_status_layout = QGridLayout(right_status)
+        right_status_layout.addWidget(QLabel("Joint"), 0, 0)
+        right_status_layout.addWidget(QLabel("Value"), 0, 1)
+        for i, name in enumerate(JOINT_NAMES):
+            right_status_layout.addWidget(QLabel(name), i + 1, 0)
+            rr = QLabel("-")
             self.right_labels.append(rr)
-            status_layout.addWidget(ll, i + 1, 1)
-            status_layout.addWidget(rr, i + 1, 2)
-        main.addWidget(status_box)
+            right_status_layout.addWidget(rr, i + 1, 1)
+        right_col.addWidget(right_status)
 
         if self.no_plot:
-            main.addWidget(QLabel("Live plot disabled by --no-plot"))
-            self.plot = None
+            left_col.addWidget(QLabel("Live plot disabled by --no-plot"))
+            right_col.addWidget(QLabel("Live plot disabled by --no-plot"))
+            self.plot_l = None
+            self.plot_r = None
         else:
-            self.plot = CurrentPlotCanvas(history_len=self.history_len, dt_s=self.dt_s)
-            main.addWidget(self.plot)
+            self.plot_l = HandPlotCanvas("Left", history_len=self.history_len, dt_s=self.dt_s)
+            self.plot_r = HandPlotCanvas("Right", history_len=self.history_len, dt_s=self.dt_s)
+            left_col.addWidget(self.plot_l)
+            right_col.addWidget(self.plot_r)
 
+        main.addLayout(left_col, 1)
+        main.addLayout(right_col, 1)
         self.setCentralWidget(root)
 
-    def _selected_hands(self) -> list[HandDDSIO]:
-        sel = self.target_hand_combo.currentText()
-        if sel == "left":
-            return [self.hand_l]
-        if sel == "right":
-            return [self.hand_r]
-        return [self.hand_l, self.hand_r]
-
-    def _emergency_open(self):
-        self.slider.setValue(0)
-        mode = self.mode_combo.currentText()
-        self.hand_l.send_grasp(0, mode=mode)
-        self.hand_r.send_grasp(0, mode=mode)
-
     def _tick(self):
-        target = self.slider.value()
-        mode = self.mode_combo.currentText()
-        for hand in self._selected_hands():
-            hand.send_grasp(target, mode=mode)
+        self.hand_l.send_grasp(self.left_slider.value(), mode=self.left_mode_combo.currentText())
+        self.hand_r.send_grasp(self.right_slider.value(), mode=self.right_mode_combo.currentText())
 
         state_l = self.hand_l.read_state()
         state_r = self.hand_r.read_state()
         curr_l = [0.0] * 6 if state_l is None else list(state_l.current)
         curr_r = [0.0] * 6 if state_r is None else list(state_r.current)
+        force_l = [0.0] * 6 if state_l is None else list(state_l.force_act)
+        force_r = [0.0] * 6 if state_r is None else list(state_r.force_act)
+        temp_l = [0.0] * 6 if state_l is None else list(state_l.temperature)
+        temp_r = [0.0] * 6 if state_r is None else list(state_r.temperature)
 
         for i in range(6):
             self.current_left_hist[i].append(float(curr_l[i]))
             self.current_right_hist[i].append(float(curr_r[i]))
+            self.force_left_hist[i].append(float(force_l[i]))
+            self.force_right_hist[i].append(float(force_r[i]))
+            self.temp_left_hist[i].append(float(temp_l[i]))
+            self.temp_right_hist[i].append(float(temp_r[i]))
             self.left_labels[i].setText(str(curr_l[i]))
             self.right_labels[i].setText(str(curr_r[i]))
 
         self.tick_count += 1
-        if self.plot is not None and self.tick_count % 2 == 0:
-            self.plot.update_plot(self.current_left_hist, self.current_right_hist)
+        if self.tick_count % 2 == 0:
+            if self.plot_l is not None:
+                self.plot_l.update_plot(
+                    self.current_left_hist,
+                    self.force_left_hist,
+                    self.temp_left_hist,
+                )
+            if self.plot_r is not None:
+                self.plot_r.update_plot(
+                    self.current_right_hist,
+                    self.force_right_hist,
+                    self.temp_right_hist,
+                )
 
 
 def parse_args():
